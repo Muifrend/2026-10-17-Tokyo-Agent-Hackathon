@@ -94,6 +94,7 @@ export interface InterviewResult {
 }
 
 export interface CoachBridge {
+  getFriends(): Promise<import('./points').FriendsState>;
   getState(): Promise<AppState>;
   newBrainstorm(): Promise<string>;
   sendMessage(conversationId: string, content: string, requestId: string): Promise<void>;

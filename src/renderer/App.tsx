@@ -3,7 +3,9 @@ import type { AppState, Conversation, Goal, DisplaySource } from '../shared/type
 import Sidebar from './Sidebar';
 import GoalGraph from './GoalGraph';
 import GoalSetup from './GoalSetup';
+import Friends from './Friends';
 import './sidebar.css';
+import './friends.css';
 
 const bridge = window.coach;
 
@@ -26,6 +28,7 @@ export default function App() {
   const [state, setState] = useState<AppState | null>(null);
   const [graphGoalId,setGraphGoalId]=useState<string|null>(null);
   const [goalMenu,setGoalMenu]=useState(false);
+  const [friendsOpen, setFriendsOpen] = useState(false);
   const currentChat=useRef<string|null>(null);
   const creatingChat=useRef<Promise<string>|null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -59,7 +62,7 @@ export default function App() {
   const graphGoal=state?.goals.find(g=>g.id===graphGoalId)??null;
   const selected: Conversation | null =
     state?.conversations.find(c => c.id === selectedId) ?? null;
-  const messages = selected ? (state?.messages ?? []).filter(m => m.conversationId === selected.id) : [];
+  const messages = selected ? (state?.messages ?? []).filter(m => m.conversationId === selected.id && m.role !== 'reminder') : [];
   const goal = selected?.goalId ? state?.goals.find(g => g.id === selected.goalId) ?? null : null;
 
   const setupGoal = setupGoalId ? state?.goals.find(g => g.id === setupGoalId) ?? null : null;
@@ -70,9 +73,9 @@ export default function App() {
   }, [messages.length, pending]);
 
   const navigate = useCallback((id:string)=>{
-    currentChat.current=id;setSelectedId(id);setGraphGoalId(null);setDraft('');setError(null);setGoalMenu(false);
+    currentChat.current=id;setSelectedId(id);setGraphGoalId(null);setDraft('');setError(null);setGoalMenu(false);setFriendsOpen(false);
   },[]);
-  const newChat=()=>{currentChat.current=null;setSelectedId(null);setGraphGoalId(null);setDraft('');setError(null);setGoalMenu(false);retryRequest.current=null;};
+  const newChat=()=>{currentChat.current=null;setSelectedId(null);setGraphGoalId(null);setDraft('');setError(null);setGoalMenu(false);retryRequest.current=null;setFriendsOpen(false);};
   const ensureChat=async()=>{
     if(currentChat.current)return currentChat.current;
     if(creatingChat.current)return creatingChat.current;
@@ -85,7 +88,7 @@ export default function App() {
     try{const id=await ensureChat();await bridge.setChatGoal(id,goalId);setGoalMenu(false);}
     catch{setError('Could not update goal context.');}finally{setBusy(false);}
   };
-  const openGraph=(id:string)=>{setGraphGoalId(id);setGoalMenu(false);setError(null);};
+  const openGraph=(id:string)=>{setGraphGoalId(id);setGoalMenu(false);setError(null);setFriendsOpen(false);};
 
   const send=async()=>{
     const text=draft.trim();if(!text||sending||busy||!ready)return;
@@ -104,6 +107,7 @@ export default function App() {
   };
 
   const onGoalClick = async (g: Goal) => {
+    setFriendsOpen(false);
     if (session && session.goalId === g.id && (session.status === 'active' || session.status === 'paused')) {
       openGraph(g.id);
       return;
@@ -172,7 +176,7 @@ export default function App() {
   );
   return (
     <div className="app">
-      <Sidebar goals={state.goals} brainstorms={convs} selectedConversationId={graphGoal?null:selectedId} selectedGoalId={graphGoalId} activeGoalId={session?.status==='active'?session.goalId:null} disabled={!ready||busy||sending||!!setupGoal} onGoal={onGoalClick} onConversation={navigate} onNewChat={newChat}/>
+      <Sidebar goals={state.goals} brainstorms={convs} selectedConversationId={graphGoal?null:selectedId} selectedGoalId={graphGoalId} activeGoalId={session?.status==='active'?session.goalId:null} disabled={!ready||busy||sending||!!setupGoal} friendsSelected={friendsOpen} friendsDisabled={busy||sending||!!setupGoal} onFriends={()=>setFriendsOpen(true)} onGoal={onGoalClick} onConversation={navigate} onNewChat={newChat}/>
       <main className="content">
         <header className="topbar">
           <div className="tleft">
@@ -184,7 +188,7 @@ export default function App() {
               </span>
             )}
           </div>
-          <div className="trcenter">{graphGoal?.title??selected?.title??'Brainstorm'}</div>
+          <div className="trcenter">{friendsOpen ? 'Friends' : graphGoal?.title??selected?.title??'Brainstorm'}</div>
           <div className="tright">
             {activeGoal && session && (
               <>
@@ -208,7 +212,7 @@ export default function App() {
           </div>
         )}
 
-        {graphGoal ? <>
+        {friendsOpen ? <Friends /> : graphGoal ? <>
           <div className="graph-actions">
             {!graphGoal.ready
               ? <button className="btn" disabled={!!setupGoal} onClick={() => setSetupGoalId(graphGoal.id)}>Finish setup</button>

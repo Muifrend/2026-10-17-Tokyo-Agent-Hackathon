@@ -32,9 +32,29 @@ Goals can start focus once their outcome and relevant work are known. Distractio
 
 The first focus session asks for Screen Recording and Camera permission. Allow Goal Coach in **System Settings → Privacy & Security** and restart the app if Screen Recording requires it. Multiple displays get a small picker. Screen and camera images are sent to ai& only during active focus; images are discarded after analysis and never saved to disk or Neo4j. There is no audio capture.
 
-The green dot means capture is active. Pause releases the camera; Resume is explicit. Minimized sessions keep running. Locking the screen, sleep, capture loss, or repeated analysis failures pause monitoring. Closing the app stops it. Allow Goal Coach notifications in System Settings and choose a visible notification style. Native delivery failures show a concise notice; saved reminders remain in the brainstorm chat.
+The green dot means capture is active. Pause releases the camera; Resume is explicit. Minimized sessions keep running. Locking the screen, sleep, capture loss, or repeated analysis failures pause monitoring. Closing the app stops it. Allow Goal Coach notifications in System Settings and choose a visible notification style. Native delivery failures show a concise notice. Reminders remain saved in Neo4j but are hidden from the conversation so the interview stays readable.
 
 Neo4j stores chats, goals, session status, and short findings under app-specific `TGC` labels. Interview facts become native `TGCGoalDetail` nodes: subgoals, actions, motivations, obstacles, success criteria, and distractions. Typed relationships connect them to their goal or subgoal, with `SUPPORTS_DETAIL` links from source messages. A chat selected through + has a `REFINES_GOAL` relationship to the existing goal UUID. Existing goals are backfilled from their saved criteria. Interview and focus analysis both receive the relevant goal graph; adding an action changes the context used to judge focus. It does not modify unrelated data. No graph plugin or hosted backend is required.
+
+## Friends
+
+Friends above Goals opens the shared North Star leaderboard. Opening it keeps
+focus monitoring running. The leaderboard uses the shared service’s scoring:
+one point per verified focused minute plus 25 points per day in the current streak.
+
+Configure `POINTS_URL`, `POINTS_KEY` and `POINTS_PLAYER_NAME` in the ignored `.env`,
+then run `npm run setup` and restart. Both apps must use the same
+service and key. No demo players or points are generated.
+
+The optional main-process adapter reuses saved on-track findings. It credits
+only intervals between consecutive checks 5–30 seconds
+apart, within the same uninterrupted focus session. Off-track, uncertain,
+phone detections, invalid results, failures, pauses and switches break continuity. It never
+credits time before its first check or across a restart. A separate durable
+outbox retries verified intervals safely; an unavailable points service cannot
+pause coaching or suppress reminders. The shared service receives only player
+identity and interval IDs/times. Chats, goals, findings and images stay with
+the existing coaching system.
 
 ## Checks
 

@@ -9,7 +9,6 @@ import {
   useNodesState,
   useEdgesState,
   useReactFlow,
-  MarkerType,
   type NodeProps,
   type Edge,
   type Node,
@@ -28,15 +27,6 @@ const KIND_LABELS: Record<GoalDetailKind, string> = {
   distraction: 'Distraction',
 };
 
-const EDGE_LABELS: Record<GoalDetailKind, string> = {
-  subgoal: 'needs',
-  action: 'action',
-  motivation: 'why',
-  obstacle: 'obstacle',
-  success_criterion: 'success',
-  distraction: 'distraction',
-};
-
 type GraphNodeData = {
   label: string;
   kind: 'root' | GoalDetailKind;
@@ -44,10 +34,15 @@ type GraphNodeData = {
 
 type GraphNode = Node<GraphNodeData>;
 
-const NODE_W = 220;
-const NODE_H = 72;
-const ROOT_W = 240;
-const ROOT_H = 90;
+const NODE_W = 280;
+const ROOT_W = 300;
+
+// Estimate rendered text height so dagre reserves enough space (no overlaps).
+function estimateHeight(text: string, width: number, root: boolean): number {
+  const perLine = Math.max(8, Math.floor((width - 32) / (root ? 9.5 : 8)));
+  const lines = text.split('\n').reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / perLine)), 0);
+  return Math.max(root ? 112 : 104, 54 + lines * (root ? 25 : 22));
+}
 
 function GraphNodeCard({ data }: NodeProps<GraphNode>) {
   const isRoot = data.kind === 'root';
@@ -72,11 +67,13 @@ function buildLayout(goal: Goal, details: GoalDetail[]): { nodes: GraphNode[]; e
   const nodes: GraphNode[] = [];
   const edges: Edge[] = [];
 
+  const rootH = estimateHeight(goal.title, ROOT_W, true);
   nodes.push({
     id: goal.id,
     type: 'graph',
     position: { x: 0, y: 0 },
     data: { label: goal.title, kind: 'root' },
+    style: { width: ROOT_W, height: rootH },
     draggable: true,
     selectable: true,
   });
@@ -86,12 +83,15 @@ function buildLayout(goal: Goal, details: GoalDetail[]): { nodes: GraphNode[]; e
   }
 
   const g = new dagre.graphlib.Graph();
-  g.setGraph({ rankdir: 'LR', ranksep: 100, nodesep: 32 });
+  g.setGraph({ rankdir: 'LR', ranksep: 100, nodesep: 36 });
   g.setDefaultEdgeLabel(() => ({}));
-  g.setNode(goal.id,{width:ROOT_W,height:ROOT_H});
+  g.setNode(goal.id, { width: ROOT_W, height: rootH });
 
+  const sizes = new Map<string, number>();
   for (const d of relevant) {
-    g.setNode(d.id, { width: NODE_W, height: NODE_H });
+    const h = estimateHeight(d.text, NODE_W, false);
+    sizes.set(d.id, h);
+    g.setNode(d.id, { width: NODE_W, height: h });
   }
   for (const d of relevant) {
     const parent = d.parentId && relevant.some((x) => x.id === d.parentId) ? d.parentId : goal.id;
@@ -100,18 +100,18 @@ function buildLayout(goal: Goal, details: GoalDetail[]): { nodes: GraphNode[]; e
   dagre.layout(g);
 
   const rootNode = g.node(goal.id);
-  const rootX = rootNode ? rootNode.x - ROOT_W / 2 : 0;
-  const rootY = rootNode ? rootNode.y - ROOT_H / 2 : 0;
-  nodes[0] = { ...nodes[0], position: { x: rootX, y: rootY } };
+  nodes[0] = { ...nodes[0], position: { x: rootNode.x - ROOT_W / 2, y: rootNode.y - rootH / 2 } };
 
   const ids = new Set(relevant.map((d) => d.id));
   for (const d of relevant) {
+    const h = sizes.get(d.id) ?? 112;
     const n = g.node(d.id);
     nodes.push({
       id: d.id,
       type: 'graph',
-      position: { x: n.x - NODE_W / 2, y: n.y - NODE_H / 2 },
+      position: { x: n.x - NODE_W / 2, y: n.y - h / 2 },
       data: { label: d.text, kind: d.kind },
+      style: { width: NODE_W, height: h },
       draggable: true,
       selectable: true,
     });
@@ -121,7 +121,6 @@ function buildLayout(goal: Goal, details: GoalDetail[]): { nodes: GraphNode[]; e
       source: parent,
       target: d.id,
       type: 'smoothstep',
-      markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
       className: 'gg-edge',
     });
   }
@@ -147,18 +146,22 @@ function GoalGraphInner({ goal, details }: { goal: Goal; details: GoalDetail[] }
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initial.edges);
   const { fitView } = useReactFlow();
 
+  const refit = useCallback(() => {
+    window.setTimeout(() => { void fitView({ padding: 0.18, maxZoom: 1, duration: 250 }); }, 0);
+  }, [fitView]);
+
   useEffect(() => {
     const { nodes: n, edges: e } = buildLayout(goal, details);
-    const idsKey = n.map((x) => x.id).join(',')+'|'+e.map(edge=>edge.source+':'+edge.target).join(',');
+    const idsKey = n.map((x) => x.id).join(',') + '|' + e.map((edge) => edge.source + ':' + edge.target).join(',');
     const structural = idsKey !== lastIdsKey.current;
     lastIdsKey.current = idsKey;
-    setNodes(previous=>structural?n:n.map(node=>({...node,position:previous.find(old=>old.id===node.id)?.position??node.position})));
+    setNodes((previous) => structural
+      ? n
+      : n.map((node) => ({ ...node, position: previous.find((old) => old.id === node.id)?.position ?? node.position })));
     setEdges(e);
-    if (structural) {
-      window.setTimeout(() => void fitView({ padding: 0.15, duration: 250 }), 0);
-    }
+    if (structural) refit();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [goal.id, layoutKey]);
+  }, [goal.id, layoutKey, refit]);
 
   return (
     <div className="gg-wrap" role="region" aria-label="Goal graph" data-testid="goal-graph">
@@ -174,7 +177,7 @@ function GoalGraphInner({ goal, details }: { goal: Goal; details: GoalDetail[] }
         panOnDrag
         zoomOnScroll
         fitView
-        fitViewOptions={{ padding: 0.15 }}
+        fitViewOptions={{ padding: 0.18, maxZoom: 1 }}
         proOptions={{ hideAttribution: true }}
       >
         <Background color="var(--gg-grid)" gap={24} size={1} />

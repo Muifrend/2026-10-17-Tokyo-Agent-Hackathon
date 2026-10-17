@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light dark;
   --bg: #ffffff;
   --side: #f6f6f5;
   --side-sel: #ececea;
@@ -22,7 +23,10 @@
   }
 }
 
-* { box-sizing: border-box; margin: 0; padding: 0; }
+* { box-sizing: border-box; margin: 0; padding: 0; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+*::-webkit-scrollbar { width: 7px; height: 7px; }
+*::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
 html, body, #root { height: 100%; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
@@ -81,6 +85,7 @@ textarea { font: inherit; color: inherit; }
 .content { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
 
 .topbar {
+  position: relative;
   -webkit-app-region: drag;
   height: 44px; flex: none;
   display: flex; align-items: center; justify-content: space-between;
@@ -90,6 +95,7 @@ textarea { font: inherit; color: inherit; }
 .tleft, .tright { -webkit-app-region: no-drag; display: flex; align-items: center; gap: 4px; min-width: 90px; }
 .tright { justify-content: flex-end; padding-right: 8px; }
 .trcenter {
+  position: absolute; left: 50%; transform: translateX(-50%);
   -webkit-app-region: drag;
   font-size: 13px; color: var(--dim);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 50%;
@@ -101,11 +107,12 @@ textarea { font: inherit; color: inherit; }
 .notice {
   flex: none;
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 6px 16px; font-size: 12px; color: var(--err);
+  padding: 9px 20px; font-size: 12px; color: var(--err);
   border-bottom: 1px solid var(--border);
 }
 .nactions { display: flex; gap: 10px; }
-.link { color: var(--err); text-decoration: underline; font-size: 12px; padding: 0; }
+.link { color: var(--err); font-size: 12px; padding: 3px 5px; border-radius: 5px; }
+.link:hover { background: var(--side-sel); }
 
 .graph-actions {
   position: absolute;
@@ -144,18 +151,18 @@ textarea { font: inherit; color: inherit; }
 .msgs {
   flex: 1; min-height: 0; overflow-y: auto;
   width: 100%; max-width: 760px; margin: 0 auto;
-  padding: 20px 24px;
-  display: flex; flex-direction: column; gap: 16px;
+  padding: 32px 24px;
+  display: flex; flex-direction: column; gap: 24px;
 }
 .msg { display: flex; }
 .msg.user { justify-content: flex-end; }
 .msg.assistant, .msg.reminder { justify-content: flex-start; }
 .bubble {
   background: var(--bubble); border-radius: 14px;
-  padding: 8px 14px; max-width: 78%;
+  padding: 12px 16px; max-width: 78%;
   white-space: pre-wrap; word-break: break-word; line-height: 1.55;
 }
-.prose { max-width: 100%; white-space: pre-wrap; word-break: break-word; line-height: 1.6; }
+.prose { max-width: 100%; white-space: pre-wrap; word-break: break-word; line-height: 1.65; }
 .sys { color: var(--dim); font-size: 13px; }
 
 .overlay {

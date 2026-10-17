@@ -29,6 +29,7 @@ export type FocusOptions = {
   onChange: () => void;
   onReminder: (msg: Message) => void;
   onNotice: (text: string | null) => void;
+  onObservation?: (observation: Observation) => void;
   intervalMs?: number;
   now?: () => number;
 };
@@ -325,6 +326,9 @@ export class FocusController {
       // Success: reset error streak only AFTER observation persisted.
       this.consecutiveErrors = 0;
       this.safeNotice(null);
+
+      // Optional consumers receive only saved findings and cannot affect coaching.
+      try { this.opts.onObservation?.({ ...observation }); } catch { /* independent consumer */ }
 
       const t = this.now();
 

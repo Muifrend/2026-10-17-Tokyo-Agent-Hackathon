@@ -114,6 +114,30 @@ describe('FocusController', () => {
     vi.useRealTimers();
   });
 
+  it('an optional points consumer cannot suppress the existing phone reminder', async () => {
+    m.ai.analyze.mockResolvedValue(analysis({phoneDetected:true}));
+    const onObservation=vi.fn(() => {throw new Error('points offline');});
+    const independent=new FocusController({store:m.store,capture:m.capture,ai:m.ai,getGoal:()=>goal,
+      notify:m.notify,onChange:m.onChange,onReminder:m.onReminder,onNotice:m.onNotice,onObservation});
+    try {
+      await independent.start(goal,'d1'); await independent.tick();
+      expect(onObservation).toHaveBeenCalledOnce();
+      expect(m.notify).toHaveBeenCalledWith(goal.title,'Stop using your phone.');
+      expect(independent.session?.status).toBe('active');
+    } finally {await independent.dispose();}
+  });
+
+  it('points consumers never receive findings that failed to persist', async () => {
+    m.store.saveObservation.mockRejectedValue(new Error('database offline'));
+    const onObservation=vi.fn();
+    const independent=new FocusController({store:m.store,capture:m.capture,ai:m.ai,getGoal:()=>goal,
+      notify:m.notify,onChange:m.onChange,onReminder:m.onReminder,onNotice:m.onNotice,onObservation});
+    try {
+      await independent.start(goal,'d1'); await independent.tick();
+      expect(onObservation).not.toHaveBeenCalled(); expect(m.notify).not.toHaveBeenCalled();
+    } finally {await independent.dispose();}
+  });
+
   it('one detected phone immediately reminds, marks the finding off-track, and keeps the cooldown', async () => {
     m.ai.analyze.mockResolvedValue(analysis({ phoneDetected: true, verdict: 'uncertain', confidence: 0.5, reminderText: 'Generic text' }));
     await controller.start(goal, 'd1');

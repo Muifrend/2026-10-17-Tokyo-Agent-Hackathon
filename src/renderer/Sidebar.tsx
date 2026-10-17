@@ -7,6 +7,9 @@ export interface SidebarProps {
   selectedGoalId: string | null;
   activeGoalId: string | null;
   disabled: boolean;
+  friendsSelected: boolean;
+  friendsDisabled?: boolean;
+  onFriends: () => void;
   onGoal: (goal: Goal) => void;
   onConversation: (id: string) => void;
   onNewChat: () => void;
@@ -20,6 +23,9 @@ export default function Sidebar(props: SidebarProps) {
     selectedGoalId,
     activeGoalId,
     disabled,
+    friendsSelected,
+    friendsDisabled,
+    onFriends,
     onGoal,
     onConversation,
     onNewChat,
@@ -27,13 +33,24 @@ export default function Sidebar(props: SidebarProps) {
 
   return (
     <aside className="sidebar">
+      <section className="sidebar-section friends-section">
+        <button
+          className={`sidebar-heading friends-heading${friendsSelected ? ' selected' : ''}`}
+          disabled={friendsDisabled}
+          onClick={onFriends}
+          aria-pressed={friendsSelected}
+        >
+          <h2>Friends</h2>
+        </button>
+      </section>
+
       <section className="sidebar-section goals-section">
         <div className="sidebar-heading">
           <h2>Goals</h2>
         </div>
         <div className="rows sidebar-list">
           {goals.map((goal) => {
-            const selected = goal.id === selectedGoalId;
+            const selected = !friendsSelected && goal.id === selectedGoalId;
             const active = goal.id === activeGoalId;
             return (
               <button
@@ -84,7 +101,7 @@ export default function Sidebar(props: SidebarProps) {
           {brainstorms.map((c) => (
             <button
               key={c.id}
-              className={`sidebar-row${c.id === selectedConversationId ? ' selected' : ''}`}
+              className={`sidebar-row${!friendsSelected && c.id === selectedConversationId ? ' selected' : ''}`}
               disabled={disabled}
               onClick={() => onConversation(c.id)}
               title={c.title}

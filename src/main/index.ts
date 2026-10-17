@@ -13,6 +13,7 @@ import { materializeGoalGraph,backfillGoalGraph } from './goal-graph';
 import { CaptureService } from './capture';
 import { FocusController } from './focus';
 import { ReminderNotifications } from './notifications';
+import { PointsService } from './points';
 
 import type {
   AppState,
@@ -50,6 +51,7 @@ class CoachApp {
   private ai: AIClient | null = null;
   private capture: CaptureService;
   private focus: FocusController | null = null;
+  private points: PointsService | null = null;
 
   private mainWindow: BrowserWindow | null = null;
 
@@ -175,6 +177,10 @@ class CoachApp {
       }
 
       // Constructors validate required env (names only, never values).
+      if (!this.points) {
+        this.points = new PointsService({ env: process.env, statePath: join(app.getPath('userData'), 'points-outbox.json') });
+        void this.points.init().catch(() => undefined);
+      }
       this.store = new Neo4jStore(process.env);
       this.ai = new AIClient(process.env);
 
@@ -192,12 +198,14 @@ class CoachApp {
         ai: {verifyVision:()=>this.ai!.verifyVision(),analyze:(goal,frames,signal)=>this.ai!.analyze(goal,frames,signal,this.goalDetails)},
         getGoal: (goalId: string) => this.goals.find((g) => g.id === goalId),
         notify: (title: string, body: string) => this.notify(title, body),
-        onChange: () => this.push(),
+        onChange: () => { this.points?.setSession(this.focus?.session ?? null); this.push(); },
+        onObservation: observation => this.points?.recordObservation(observation),
         onReminder: (message: Message) => {
           this.messages.push(message);
           this.push();
         },
         onNotice: (text: string | null) => {
+          if (text) this.points?.invalidateCheck();
           this.notice = text;
           this.push();
         },
@@ -318,6 +326,8 @@ class CoachApp {
       /* ignore */
     }
     this.focus = null;
+    await this.points?.close().catch(() => undefined);
+    this.points = null;
     try {
       await this.capture.dispose();
     } catch {
@@ -359,6 +369,9 @@ class CoachApp {
   }
 
   registerIpc(): void {
+    this.handle('coach:get-friends', null, async () => this.points
+      ? this.points.leaderboard()
+      : { status: 'setup', rows: [], playerName: '', message: 'Friends needs the shared points service.' });
     // Available always, never throws for bootstrap state.
     this.handle(
       'coach:get-state',

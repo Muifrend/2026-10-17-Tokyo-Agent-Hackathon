@@ -27,6 +27,36 @@
   overflow: hidden;
 }
 
+.friends-section {
+  flex: 0 0 auto;
+}
+
+.friends-heading {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 5px;
+}
+
+.friends-heading:hover:not(:disabled) {
+  background: var(--side-sel);
+}
+
+.friends-heading.selected {
+  background: var(--side-sel);
+}
+
+.friends-heading:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.friends-heading h2 {
+  pointer-events: none;
+}
+
 .goals-section {
   flex: 0 1 auto;
   max-height: 45%;
