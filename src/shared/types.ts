@@ -57,6 +57,7 @@ export interface Analysis {
   confidence: number;
   reason: string;
   reminderText: string;
+  phoneDetected?: boolean;
 }
 
 export interface Observation extends Analysis {

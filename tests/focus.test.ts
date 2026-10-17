@@ -114,6 +114,35 @@ describe('FocusController', () => {
     vi.useRealTimers();
   });
 
+  it('one detected phone immediately reminds, marks the finding off-track, and keeps the cooldown', async () => {
+    m.ai.analyze.mockResolvedValue(analysis({ phoneDetected: true, verdict: 'uncertain', confidence: 0.5, reminderText: 'Generic text' }));
+    await controller.start(goal, 'd1');
+    await controller.tick();
+    expect(m.store.saveObservation).toHaveBeenCalledWith(expect.objectContaining({ phoneDetected: true, verdict: 'off_track', reminderText: 'Stop using your phone.' }));
+    expect(m.store.saveReminder).toHaveBeenCalledWith(goal, 'Stop using your phone.');
+    expect(m.notify).toHaveBeenCalledTimes(1);
+    expect(m.notify).toHaveBeenCalledWith(goal.title, 'Stop using your phone.');
+    await controller.tick();
+    expect(m.notify).toHaveBeenCalledTimes(1);
+  });
+
+  it('a false phone flag retains the two-check rule for other distractions', async () => {
+    m.ai.analyze.mockResolvedValue(analysis({ phoneDetected: false }));
+    await controller.start(goal, 'd1');
+    await controller.tick();
+    expect(m.notify).not.toHaveBeenCalled();
+    await controller.tick();
+    expect(m.notify).toHaveBeenCalledTimes(1);
+  });
+
+  it('malformed phone flags cannot trigger reminders or saved observations', async () => {
+    m.ai.analyze.mockResolvedValue({ ...analysis(), phoneDetected: 'yes' } as unknown as Analysis);
+    await controller.start(goal, 'd1');
+    await controller.tick();
+    expect(m.store.saveObservation).not.toHaveBeenCalled();
+    expect(m.notify).not.toHaveBeenCalled();
+  });
+
   it('two high-confidence off_track ticks trigger exactly one persistent reminder and one notification', async () => {
     m.ai.analyze.mockResolvedValue(analysis({ verdict: 'off_track', confidence: 0.9 }));
     await controller.start(goal, 'd1');

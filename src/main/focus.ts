@@ -46,6 +46,7 @@ function isValidAnalysis(a: unknown): a is Analysis {
   if (x.confidence < 0 || x.confidence > 1) return false;
   if (typeof x.reason !== 'string' || x.reason.length === 0) return false;
   if (typeof x.reminderText !== 'string' || x.reminderText.length === 0) return false;
+  if (x.phoneDetected !== undefined && typeof x.phoneDetected !== 'boolean') return false;
   return true;
 }
 
@@ -297,6 +298,15 @@ export class FocusController {
         return;
       }
 
+      // Phone detection is a direct object-detection policy: normalize before persist.
+      if (analysis.phoneDetected === true) {
+        analysis = {
+          ...analysis,
+          verdict: 'off_track',
+          reminderText: 'Stop using your phone.',
+        };
+      }
+
       const observation: Observation = {
         ...analysis,
         id: makeId('obs'),
@@ -317,6 +327,8 @@ export class FocusController {
       this.safeNotice(null);
 
       const t = this.now();
+
+      // All other distractions retain the original two-high-confidence check with cooldown.
       if (analysis.verdict === 'off_track' && analysis.confidence >= 0.8) {
         this.consecutiveOffTrack++;
       } else {
@@ -325,7 +337,7 @@ export class FocusController {
       }
 
       if (
-        this.consecutiveOffTrack >= 2 &&
+        (analysis.phoneDetected === true || this.consecutiveOffTrack >= 2) &&
         t - this.lastReminderAt >= REMINDER_COOLDOWN_MS
       ) {
         let msg: Message;

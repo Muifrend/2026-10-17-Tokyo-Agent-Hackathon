@@ -23,6 +23,7 @@ function modelsResponse(entry: Record<string, unknown>): Response {
 }
 
 const validAnalysis = {
+  phoneDetected: false,
   verdict: 'on_track',
   confidence: 0.9,
   reason: 'Editor is open with thesis text.',
@@ -112,6 +113,24 @@ describe('AIClient', () => {
     expect(images).toHaveLength(2);
     expect(images[0].image_url.url).toBe('data:image/png;base64,AAA');
     expect(images[1].image_url.url).toBe('data:image/png;base64,BBB');
+  });
+
+  it('uses the one-frame phone-presence policy and requires a phone detection flag', async () => {
+    fetchMock.mockResolvedValueOnce(modelsResponse({ capabilities: ['vision'] }))
+      .mockResolvedValueOnce(chatResponse(JSON.stringify({ ...validAnalysis, phoneDetected: true, verdict: 'off_track', reminderText: 'Stop using your phone.' })));
+    const client = new AIClient(env);
+    await client.init();
+    const result = await client.analyze(dummyGoal, { screen: 'screen', camera: 'camera' });
+    expect(result.phoneDetected).toBe(true);
+    const body = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(body.response_format.json_schema.schema.required).toContain('phoneDetected');
+    expect(body.response_format.json_schema.schema.properties.reminderText.minLength).toBe(1);
+    expect(body.response_format.json_schema.schema.properties.reason.minLength).toBe(1);
+    expect(body.messages[1].content.filter((p: {type: string}) => p.type === 'image_url')).toHaveLength(2);
+    expect(body.messages[0].content).toContain('Stop using your phone.');
+    expect(analysisSchema.safeParse(validAnalysis).success).toBe(true);
+    const { phoneDetected: _unused, ...missingPhoneFlag } = validAnalysis;
+    expect(analysisSchema.safeParse(missingPhoneFlag).success).toBe(false);
   });
 
   it('rejects malformed structured output with a short error', async () => {

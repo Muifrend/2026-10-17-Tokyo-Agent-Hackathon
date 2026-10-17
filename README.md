@@ -1,6 +1,6 @@
 # Goal Coach
 
-A minimal Mac app for brainstorming goals and staying on track. Goals and Brainstorms are always visible in the sidebar. Goals appear automatically as you chat. Use the composer’s + button to select an existing goal; subsequent messages extend its graph in the same chat. Select a ready goal to open its interactive graph and start screen and webcam checks every 20 seconds. Two confident off-track checks produce a native reminder, with a two-minute cooldown.
+A minimal Mac app for brainstorming goals and staying on track. Goals and Brainstorms are always visible in the sidebar. Goals appear automatically as you chat. Use the composer’s + button to select an existing goal; subsequent messages extend its graph in the same chat. Select a ready goal to open its interactive graph and start screen and webcam checks every 20 seconds. A physical phone visible in one webcam still immediately produces “Stop using your phone.” Other distractions require two confident off-track checks. Reminders share a two-minute cooldown.
 
 ## Run
 
