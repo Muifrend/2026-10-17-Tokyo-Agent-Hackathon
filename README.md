@@ -38,6 +38,8 @@ Neo4j stores chats, goals, session status, and short findings under app-specific
 
 ## Friends
 
+For other agents building compatible personalized apps, see [the points integration guide](POINTS_INTEGRATION.md): minimum app responsibilities, the HTTP contract, scoring, privacy boundaries, and reliable delivery.
+
 Friends above Goals opens the shared North Star leaderboard. Opening it keeps
 focus monitoring running. The leaderboard uses the shared service’s scoring:
 one point per verified focused minute plus 25 points per day in the current streak.
