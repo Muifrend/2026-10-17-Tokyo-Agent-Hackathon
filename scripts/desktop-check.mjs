@@ -15,7 +15,7 @@ try{
  await page.screenshot({path:'artifacts/desktop.png'});
  if(!state.ready)throw new Error('App setup failed');
  if(process.argv.includes('--expect-saved')&&(!state.goals.length||!state.messages.some(m=>m.role==='user')))throw new Error('Restart persistence failed');
- if(process.argv.includes('--expect-saved'))console.log('Chats and goals survived a full app restart.');
+ if(process.argv.includes('--expect-saved')){if(!state.goalDetails.length||!state.conversations.some(c=>c.kind==='brainstorm'&&c.goalId&&c.goalContextStartedAt))throw new Error('Graph or selected goal context did not survive restart');console.log('Chats, goal graph, and selected goal context survived a full restart.');}
  if(await page.locator('h1').innerText()!=='What goals are you trying to achieve?')throw new Error('Initial question missing');
  console.log('Packaged desktop launch, preload bridge, live connections, and initial UI passed.');
 }finally{await desktop.close();}

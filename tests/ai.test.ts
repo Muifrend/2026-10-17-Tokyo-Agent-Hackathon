@@ -100,13 +100,14 @@ describe('AIClient', () => {
       .mockResolvedValueOnce(chatResponse(JSON.stringify(validAnalysis)));
     const client = new AIClient(env);
     await client.init();
-    await client.analyze(dummyGoal, { screen: 'data:image/png;base64,AAA', camera: 'data:image/png;base64,BBB' });
+    await client.analyze(dummyGoal, { screen: 'data:image/png;base64,AAA', camera: 'data:image/png;base64,BBB' },undefined,[{id:'action',goalId:dummyGoal.id,kind:'action',text:'Draft the introduction',parentId:null,sourceMessageId:null,createdAt:'t',updatedAt:'t'}]);
 
     const body = JSON.parse(fetchMock.mock.calls[1][1].body);
     const parts = body.messages[1].content;
     expect(parts[0].type).toBe('text');
     expect(parts[0].text).toContain('screen');
     expect(parts[0].text).toContain(dummyGoal.title);
+    expect(parts[0].text).toContain('Draft the introduction');
     const images = parts.filter((p: { type: string }) => p.type === 'image_url');
     expect(images).toHaveLength(2);
     expect(images[0].image_url.url).toBe('data:image/png;base64,AAA');

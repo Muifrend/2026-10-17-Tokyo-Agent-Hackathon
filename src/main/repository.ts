@@ -1,5 +1,8 @@
 import neo4j, { Driver, Session } from 'neo4j-driver';
 import { randomUUID } from 'crypto';
+import { relationFor } from './goal-graph';
+import { isGoalReady } from './goals';
+import type { GraphChanges, GoalDetail } from '../shared/types';
 import {
   Conversation,
   FocusSession,
@@ -10,7 +13,7 @@ import {
 
 export interface Store {
   init(): Promise<void>;
-  load(): Promise<{ conversations: Conversation[]; goals: Goal[]; messages: Message[] }>;
+  load(): Promise<{ conversations: Conversation[]; goals: Goal[]; messages: Message[]; goalDetails:GoalDetail[] }>;
   createConversation(c: Conversation): Promise<void>;
   saveTurn(
     conversationId: string,
@@ -18,7 +21,10 @@ export interface Store {
     assistant: Message,
     goals: Goal[],
     title: string,
+    graph?:GraphChanges,
   ): Promise<void>;
+  saveGraph(graph:GraphChanges):Promise<void>;
+  setChatGoal(conversationId:string,goalId:string|null):Promise<void>;
   saveSession(s: FocusSession): Promise<void>;
   saveObservation(o: Observation): Promise<void>;
   saveReminder(goal: Goal, text: string): Promise<Message>;
@@ -71,6 +77,7 @@ export class Neo4jStore implements Store {
           'TGCGoal',
           'TGCFocusSession',
           'TGCObservation',
+          'TGCGoalDetail',
         ];
         for (const label of constraints) {
           await session.run(
@@ -78,6 +85,17 @@ export class Neo4jStore implements Store {
           );
         }
 
+        const legacyGoals=await session.run('MATCH (g:TGCGoal) RETURN g.id AS id,g.json AS json');
+        for(const row of legacyGoals.records){
+          const goal=parseJson<Goal>(row.get('json'));
+          const ready=isGoalReady(goal);
+          goal.ready=ready;
+          const json=JSON.stringify(goal);
+          await session.run(
+            'MATCH (g:TGCGoal {id:$id}) SET g.title=$title, g.outcome=$outcome, g.ready=$ready, g.json=$json',
+            {id:goal.id,title:goal.title,outcome:goal.outcome,ready,json}
+          );
+        }
         // Mark only active sessions of THIS instance as interrupted.
         const result = await session.run(
           `MATCH (f:TGCFocusSession) WHERE f.json CONTAINS '"status":"active"' RETURN f.id AS id, f.json AS json`,
@@ -107,7 +125,7 @@ export class Neo4jStore implements Store {
     }
   }
 
-  async load(): Promise<{ conversations: Conversation[]; goals: Goal[]; messages: Message[] }> {
+  async load(): Promise<{ conversations: Conversation[]; goals: Goal[]; messages: Message[]; goalDetails:GoalDetail[] }> {
     const session = this.session();
     try {
       const convRes = await session.run('MATCH (c:TGCConversation) RETURN c.json AS json');
@@ -119,10 +137,12 @@ export class Neo4jStore implements Store {
       const goals = goalRes.records
         .map((r) => parseJson<Goal>(r.get('json')))
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      const detailRes=await session.run('MATCH (d:TGCGoalDetail) RETURN d.json AS json');
+      const goalDetails=detailRes.records.map(r=>parseJson<GoalDetail>(r.get('json')));
       const messages = msgRes.records
         .map((r) => parseJson<Message>(r.get('json')))
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-      return { conversations, goals, messages };
+      return { conversations, goals, messages,goalDetails };
     } catch (err) {
       throw sanitize(err);
     } finally {
@@ -150,6 +170,7 @@ export class Neo4jStore implements Store {
     assistant: Message,
     goals: Goal[],
     title: string,
+    graph?:GraphChanges,
   ): Promise<void> {
     const session = this.session();
     try {
@@ -180,6 +201,7 @@ export class Neo4jStore implements Store {
         for (const goal of goals) {
           await this.upsertGoalInTx(tx, goal);
         }
+        if(graph)await this.writeGraph(tx,graph);
       });
     } catch (err) {
       throw sanitize(err);
@@ -194,13 +216,14 @@ export class Neo4jStore implements Store {
   ): Promise<void> {
     await tx.run(
       `MERGE (g:TGCGoal {id: $id})
-       SET g.json = $json, g.createdAt = coalesce(g.createdAt, $createdAt), g.updatedAt = $updatedAt
+       SET g.title=$title, g.outcome=$outcome, g.ready=$ready, g.json = $json, g.createdAt = coalesce(g.createdAt, $createdAt), g.updatedAt = $updatedAt
        WITH g
        MATCH (conv:TGCConversation {id: $conversationId})
        MERGE (conv)-[:PRODUCED_GOAL]->(g)
        `,
       {
         id: goal.id,
+        title:goal.title,outcome:goal.outcome,ready:goal.ready,
         json: JSON.stringify(goal),
         createdAt: goal.createdAt,
         updatedAt: goal.updatedAt,
@@ -234,6 +257,36 @@ export class Neo4jStore implements Store {
         goalId: goal.id,
       },
     );
+  }
+
+  async setChatGoal(conversationId:string,goalId:string|null):Promise<void> {
+    const session=this.session();
+    try {await session.executeWrite(async tx=>{
+      const rows=await tx.run('MATCH (c:TGCConversation {id:$id}) RETURN c.json AS json',{id:conversationId});
+      if(!rows.records[0])throw new Error('Chat not found');
+      const conversation=parseJson<Conversation>(rows.records[0].get('json'));
+      if(goalId){const target=await tx.run('MATCH (g:TGCGoal {id:$id}) RETURN g.id AS id',{id:goalId});if(!target.records.length)throw new Error('Goal not found');}
+      if(conversation.goalId!==goalId)conversation.goalContextStartedAt=new Date().toISOString();
+      conversation.goalId=goalId;
+      await tx.run('MATCH (c:TGCConversation {id:$id}) SET c.json=$json, c.goalId=$goalId WITH c OPTIONAL MATCH (c)-[r:REFINES_GOAL]->(:TGCGoal) DELETE r',{id:conversationId,json:JSON.stringify(conversation),goalId});
+      if(goalId)await tx.run('MATCH (c:TGCConversation {id:$chat}), (g:TGCGoal {id:$goal}) MERGE (c)-[:REFINES_GOAL]->(g)',{chat:conversationId,goal:goalId});
+    });}catch(error){throw sanitize(error);}finally{await session.close();}
+  }
+  async saveGraph(graph:GraphChanges):Promise<void> {
+    if(!graph.upserts.length&&!graph.removeIds.length)return;
+    const session=this.session();
+    try{await session.executeWrite(tx=>this.writeGraph(tx,graph));}catch(error){throw sanitize(error);}finally{await session.close();}
+  }
+  private async writeGraph(tx: import('neo4j-driver').ManagedTransaction,graph:GraphChanges):Promise<void> {
+    if(graph.removeIds.length)await tx.run('MATCH (d:TGCGoalDetail) WHERE d.id IN $ids DETACH DELETE d',{ids:graph.removeIds});
+    for(const d of graph.upserts)await tx.run('MERGE (d:TGCGoalDetail {id:$id}) SET d += $props, d.json=$json',{id:d.id,props:{...d},json:JSON.stringify(d)});
+    for(const d of graph.upserts){
+      const relation=relationFor(d.kind);
+      await tx.run('MATCH (d:TGCGoalDetail {id:$id}) OPTIONAL MATCH (p)-[r:HAS_SUBGOAL|REQUIRES_ACTION|MOTIVATED_BY|FACES_OBSTACLE|SUCCESS_WHEN|DISTRACTED_BY]->(d) WHERE p:TGCGoal OR p:TGCGoalDetail DELETE r',{id:d.id});
+      if(d.parentId)await tx.run(`MATCH (p:TGCGoalDetail {id:$parent,goalId:$goal}), (d:TGCGoalDetail {id:$id}) MERGE (p)-[:${relation}]->(d)`,{parent:d.parentId,goal:d.goalId,id:d.id});
+      else await tx.run(`MATCH (g:TGCGoal {id:$goal}), (d:TGCGoalDetail {id:$id}) MERGE (g)-[:${relation}]->(d)`,{goal:d.goalId,id:d.id});
+      if(d.sourceMessageId)await tx.run('MATCH (m:TGCMessage {id:$message}), (d:TGCGoalDetail {id:$id}) MERGE (m)-[:SUPPORTS_DETAIL]->(d)',{message:d.sourceMessageId,id:d.id});
+    }
   }
 
   async saveSession(s: FocusSession): Promise<void> {

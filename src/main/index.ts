@@ -9,14 +9,17 @@ import { z } from 'zod';
 import { Neo4jStore } from './repository';
 import { AIClient } from './ai';
 import { materializeGoals } from './goals';
+import { materializeGoalGraph,backfillGoalGraph } from './goal-graph';
 import { CaptureService } from './capture';
 import { FocusController } from './focus';
+import { ReminderNotifications } from './notifications';
 
 import type {
   AppState,
   Conversation,
   Goal,
   Message,
+  GoalDetail,
 } from '../shared/types';
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -52,11 +55,22 @@ class CoachApp {
 
   private conversations: Conversation[] = [];
   private goals: Goal[] = [];
+  private goalDetails:GoalDetail[]=[];
   private messages: Message[] = [];
 
   private ready = false;
   private bootstrapping = false;
   private notice: string | null = null;
+  private notificationNotice: string | null = null;
+  private notifications = new ReminderNotifications({
+    supported: () => Notification.isSupported(),
+    create: (title, body) => new Notification({ title, body }),
+    onUnavailable: () => {
+      this.notificationNotice = 'Reminder saved. macOS notification delivery failed; check Notifications settings.';
+      this.push();
+    },
+    onShown: () => { this.notificationNotice = null; this.push(); },
+  });
 
   private turnInFlight = false;
   private inFlightRequestId: string | null = null;
@@ -83,9 +97,10 @@ class CoachApp {
     return {
       conversations: [...this.conversations],
       goals: [...this.goals],
+      goalDetails:[...this.goalDetails],
       messages: [...this.messages],
       session: this.focus?.session ?? null,
-      notice: this.notice,
+      notice: this.notice ?? this.notificationNotice,
       ready: this.ready,
     };
   }
@@ -105,20 +120,15 @@ class CoachApp {
     this.push();
   }
 
-  private applyLoaded(data: { conversations: Conversation[]; goals: Goal[]; messages: Message[] }): void {
+  private applyLoaded(data: { conversations: Conversation[]; goals: Goal[]; messages: Message[];goalDetails:GoalDetail[] }): void {
     this.conversations = data.conversations;
     this.goals = data.goals;
+    this.goalDetails=data.goalDetails;
     this.messages = data.messages;
   }
 
   private notify(title: string, body: string): void {
-    // Native notifications, text only — never HTML.
-    if (!Notification.isSupported()) return;
-    try {
-      new Notification({ title: String(title), body: String(body) }).show();
-    } catch {
-      /* notification failures are non-fatal */
-    }
+    this.notifications.deliver(String(title), String(body));
   }
 
   // ----------------------------------------------------------------- bootstrap
@@ -171,13 +181,15 @@ class CoachApp {
       await this.store.init();
       await this.ai.init();
 
-      const data = await this.store.load();
+      let data = await this.store.load();
+      const migrated=backfillGoalGraph(data.goals,data.goalDetails);
+      if(migrated.upserts.length){await this.store.saveGraph(migrated);data=await this.store.load();}
       this.applyLoaded(data);
 
       this.focus = new FocusController({
         store: this.store,
         capture: this.capture,
-        ai: this.ai,
+        ai: {verifyVision:()=>this.ai!.verifyVision(),analyze:(goal,frames,signal)=>this.ai!.analyze(goal,frames,signal,this.goalDetails)},
         getGoal: (goalId: string) => this.goals.find((g) => g.id === goalId),
         notify: (title: string, body: string) => this.notify(title, body),
         onChange: () => this.push(),
@@ -294,6 +306,7 @@ class CoachApp {
 
   private async shutdown(): Promise<void> {
     if (this.shutdownStarted && this.shutdownComplete) return;
+    this.notifications.dispose();
     // Guarantee capture tracks stop before quit: synchronous intercept + async cleanup.
     try {      await this.capture.stop();
     } catch {
@@ -381,6 +394,15 @@ class CoachApp {
         return null;
       },
     );
+
+    this.handle('coach:set-chat-goal',z.object({conversationId:uuidSchema,goalId:uuidSchema.nullable()}),async({conversationId,goalId})=>{
+      if(!this.ready||!this.store)throw new Error('Not ready');
+      if(this.turnInFlight)throw new Error('Wait for the current reply.');
+      const chat=this.conversations.find(c=>c.id===conversationId);
+      if(!chat||chat.kind!=='brainstorm')throw new Error('Select a brainstorm chat');
+      if(goalId&&!this.goals.some(g=>g.id===goalId))throw new Error('Goal not found');
+      await this.store.setChatGoal(conversationId,goalId);chat.goalId=goalId;this.push();
+    });
 
     this.handle(
       'coach:select-goal',
@@ -503,7 +525,7 @@ class CoachApp {
     const run = (async () => {
       try {
         const prior = this.messages
-          .filter((m) => m.conversationId === conversationId)
+          .filter((m) => m.conversationId === conversationId && (!conversation.goalId || !conversation.goalContextStartedAt || m.createdAt>=conversation.goalContextStartedAt))
           .slice()
           .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
         prior.push(userMessage);
@@ -512,11 +534,12 @@ class CoachApp {
           ? this.goals.find((g) => g.id === conversation.goalId)
           : undefined;
 
-        const result = await this.ai!.interview(prior, this.goals, scopeGoal);
+        const result = await this.ai!.interview(prior, this.goals, scopeGoal,undefined,this.goalDetails);
 
         // Never generate goals locally without AI: only from the interview result.
+        const scopedDrafts=scopeGoal?result.goals.filter(d=>d.id===scopeGoal.id):result.goals;
         const updatedGoals = materializeGoals(
-          result.goals ?? [],
+          scopedDrafts,
           this.goals,
           conversationId,
           scopeGoal,
@@ -525,6 +548,8 @@ class CoachApp {
           if (!goal.conversationId) goal.conversationId = conversationId;
         }
 
+        const goalsAfter=[...this.goals.filter(g=>!updatedGoals.some(u=>u.id===g.id)),...updatedGoals];
+        const graphChanges=materializeGoalGraph(scopedDrafts,goalsAfter,this.goalDetails,userMessage.id,this.goals);
         const userTs = Date.parse(userMessage.createdAt);
         const assistantMessage: Message = {
           id: `${requestId}:a`,
@@ -540,10 +565,13 @@ class CoachApp {
           assistantMessage,
           updatedGoals,
           result.title,
+          graphChanges,
         );
 
         // Committed. Cache merge first so state is consistent even if reload fails.
         this.messages.push(userMessage, assistantMessage);
+        const changedDetails=new Set([...graphChanges.removeIds,...graphChanges.upserts.map(d=>d.id)]);
+        this.goalDetails=[...this.goalDetails.filter(d=>!changedDetails.has(d.id)),...graphChanges.upserts];
         this.notice = null;
         if (result.title) conversation.title = result.title;
         for (const goal of updatedGoals) {

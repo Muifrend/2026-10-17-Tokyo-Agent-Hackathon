@@ -28,7 +28,7 @@
 }
 
 .goals-section {
-  flex: 0 1 45%;
+  flex: 0 1 auto;
   max-height: 45%;
 }
 

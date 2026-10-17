@@ -24,7 +24,6 @@ try{
  if(!goal?.ready)throw new Error('Interview did not produce a ready goal');
  if(s.messages.filter(m=>m.role==='user'&&!beforeIds.includes(m.id)).length!==1)throw new Error('User message duplicated');
  console.log('Live GUI interview, goal extraction, and sidebar persistence passed.');
- await page.getByRole('button',{name:'Goals',exact:true}).click();
  await page.getByRole('button',{name:goal.title,exact:true}).click();
  console.log('Screen permission/picker requested.');
  await page.getByRole('dialog',{name:'Start focus session'}).waitFor({timeout:90000});

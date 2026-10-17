@@ -26,6 +26,7 @@ export interface GoalDraft {
 }
 
 export interface Conversation {
+  goalContextStartedAt?:string|null;
   id: string;
   title: string;
   kind: 'brainstorm' | 'goal';

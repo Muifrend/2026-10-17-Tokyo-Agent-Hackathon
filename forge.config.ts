@@ -1,6 +1,11 @@
 import type { ForgeConfig } from '@electron-forge/shared-types';
 import { MakerZIP } from '@electron-forge/maker-zip';
 import { VitePlugin } from '@electron-forge/plugin-vite';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { join } from 'node:path';
+
+const execFileAsync = promisify(execFile);
 
 const config: ForgeConfig = {
   packagerConfig: {
@@ -13,6 +18,18 @@ const config: ForgeConfig = {
     }
   },
   rebuildConfig: {},
+  hooks: {
+    postPackage: async (_config, result) => {
+      if (result.platform !== 'darwin') return;
+      // Seal the finished bundle after Packager has changed its name and Info.plist.
+      // This is local development signing; Developer ID/notarization remain separate.
+      for (const outputPath of result.outputPaths) {
+        const appPath = join(outputPath, 'Goal Coach.app');
+        await execFileAsync('codesign', ['--force', '--deep', '--sign', '-', appPath]);
+        await execFileAsync('codesign', ['--verify', '--deep', '--strict', appPath]);
+      }
+    },
+  },
   makers: [new MakerZIP({}, ['darwin'])],
   plugins: [
     new VitePlugin({

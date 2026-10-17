@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { materializeGoals, normalizeTitle } from '../src/main/goals';
+import { materializeGoals, normalizeTitle, isGoalReady } from '../src/main/goals';
 import type { Goal, GoalDraft } from '../src/shared/types';
 
 function existingGoal(overrides: Partial<Goal> = {}): Goal {
@@ -36,6 +36,17 @@ describe('normalizeTitle', () => {
 
   it('constrains length', () => {
     expect(normalizeTitle('x'.repeat(500)).length).toBeLessThanOrEqual(120);
+  });
+});
+
+describe('isGoalReady', () => {
+  it('ready with empty offTrack', () => {
+    expect(isGoalReady({ outcome: 'done', onTrack: ['a'] })).toBe(true);
+  });
+
+  it('not ready when outcome or onTrack missing', () => {
+    expect(isGoalReady({ outcome: '', onTrack: ['a'] })).toBe(false);
+    expect(isGoalReady({ outcome: 'x', onTrack: [] })).toBe(false);
   });
 });
 
@@ -114,14 +125,19 @@ describe('materializeGoals', () => {
     expect(out[0].outcome).toBe('first');
   });
 
-  it('marks not ready when outcome or track lists are empty', () => {
+  it('marks ready with empty offTrack, not ready when outcome or onTrack missing', () => {
     const out = materializeGoals(
-      [draft({ outcome: '  ', onTrack: [], offTrack: ['x'] }), draft({ title: 'B', outcome: 'ok', onTrack: ['a'], offTrack: [' '] })],
+      [
+        draft({ title: 'A', outcome: '  ', onTrack: [], offTrack: ['x'] }),
+        draft({ title: 'B', outcome: 'ok', onTrack: ['a'], offTrack: [' '] }),
+        draft({ title: 'C', outcome: 'ok', onTrack: [' '], offTrack: [] }),
+      ],
       [],
       'conv-src'
     );
     expect(out[0].ready).toBe(false);
-    expect(out[1].ready).toBe(false);
+    expect(out[1].ready).toBe(true);
+    expect(out[2].ready).toBe(false);
   });
 
   it('strips blank entries and dedups arrays', () => {
@@ -132,7 +148,26 @@ describe('materializeGoals', () => {
     );
     expect(out[0].onTrack).toEqual(['a', 'b']);
     expect(out[0].offTrack).toEqual([]);
-    expect(out[0].ready).toBe(false);
+    expect(out[0].ready).toBe(true);
+  });
+
+  it('updates existing not-ready goal with optional empty offTrack and marks ready', () => {
+    const existing = existingGoal({
+      id: 'goal-3',
+      title: 'Legacy goal',
+      outcome: 'Shipped',
+      onTrack: ['merged'],
+      offTrack: [],
+      ready: false,
+    });
+    const out = materializeGoals(
+      [draft({ id: 'goal-3', title: 'Legacy goal', outcome: 'Shipped', onTrack: ['merged'], offTrack: [] })],
+      [existing],
+      'conv-src'
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].ready).toBe(true);
+    expect(out[0].offTrack).toEqual([]);
   });
 
   it('merges updates without erasing populated fields with empty ones', () => {

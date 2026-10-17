@@ -31,8 +31,10 @@ function normalizeOutcome(outcome: unknown): string {
   return String(outcome ?? '').trim().slice(0, MAX_FIELD_LENGTH);
 }
 
-function isReady(outcome: string, onTrack: string[], offTrack: string[]): boolean {
-  return outcome.length > 0 && onTrack.length > 0 && offTrack.length > 0;
+export function isGoalReady(goal: Pick<Goal, 'outcome' | 'onTrack'>): boolean {
+  const outcome = String(goal.outcome ?? '').trim().length > 0;
+  const onTrack = Array.isArray(goal.onTrack) && goal.onTrack.some((item) => String(item ?? '').trim().length > 0);
+  return outcome && onTrack;
 }
 
 function isPopulated(value: string): boolean {
@@ -105,7 +107,7 @@ export function materializeGoals(
       const mergedOutcome = isPopulated(outcome) ? outcome : target.outcome;
       const mergedOnTrack = onTrack.length > 0 ? onTrack : target.onTrack;
       const mergedOffTrack = offTrack.length > 0 ? offTrack : target.offTrack;
-      const mergedReady = isReady(mergedOutcome, mergedOnTrack, mergedOffTrack);
+      const mergedReady = isGoalReady({ outcome: mergedOutcome, onTrack: mergedOnTrack });
 
       if (
         target.title === title &&
@@ -137,7 +139,7 @@ export function materializeGoals(
         outcome,
         onTrack,
         offTrack,
-        ready: isReady(outcome, onTrack, offTrack),
+        ready: isGoalReady({ outcome, onTrack }),
         sourceConversationId,
         conversationId: randomUUID(),
         createdAt: now,

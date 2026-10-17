@@ -7,6 +7,7 @@ const invoke = (channel: string, ...args: unknown[]): Promise<unknown> =>
   ipcRenderer.invoke(channel, ...args);
 
 const coach: CoachBridge = {
+  setChatGoal: (conversationId,goalId) => invoke('coach:set-chat-goal',{conversationId,goalId}) as Promise<void>,
   getState: () => invoke('coach:get-state') as Promise<AppState>,
   newBrainstorm: () => invoke('coach:new-brainstorm') as Promise<string>,
   sendMessage: (conversationId, content, requestId) =>

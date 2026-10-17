@@ -1,12 +1,16 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { AppState, Conversation, Goal, DisplaySource } from '../shared/types';
+import Sidebar from './Sidebar';
+import GoalGraph from './GoalGraph';
+import GoalSetup from './GoalSetup';
+import './sidebar.css';
 
 const bridge = window.coach;
 
-type Tab = 'goals' | 'brainstorm';
 
 function Icon({ name, size = 16 }: { name: string; size?: number }) {
   const p: Record<string, React.ReactNode> = {
+    close: <path d="M4 4l8 8M12 4l-8 8" />,
     plus: <path d="M8 3v10M3 8h10" />,
     send: <path d="M8 13V3M4 7l4-4 4 4" />,
     pause: <><rect x="4" y="3" width="3.4" height="10" /><rect x="8.6" y="3" width="3.4" height="10" /></>,
@@ -20,7 +24,10 @@ function Icon({ name, size = 16 }: { name: string; size?: number }) {
 
 export default function App() {
   const [state, setState] = useState<AppState | null>(null);
-  const [tab, setTab] = useState<Tab>('brainstorm');
+  const [graphGoalId,setGraphGoalId]=useState<string|null>(null);
+  const [goalMenu,setGoalMenu]=useState(false);
+  const currentChat=useRef<string|null>(null);
+  const creatingChat=useRef<Promise<string>|null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [pending, setPending] = useState<string | null>(null);
@@ -33,6 +40,7 @@ export default function App() {
   const retryRequest = useRef<{id:string,text:string,conversationId:string}|null>(null);
   const requestFor=(text:string,conversationId:string)=>{if(retryRequest.current?.text!==text||retryRequest.current.conversationId!==conversationId)retryRequest.current={id:crypto.randomUUID(),text,conversationId};return retryRequest.current.id;};
   const [resumeMode, setResumeMode] = useState(false);
+  const [setupGoalId, setSetupGoalId] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const ready = state?.ready ?? false;
@@ -47,65 +55,69 @@ export default function App() {
   const session = state?.session ?? null;
   const activeGoal = session && (session.status === 'active' || session.status === 'paused') ? state?.goals.find(g => g.id === session.goalId) ?? null : null;
 
-  const convs = (state?.conversations ?? []).filter(c => tab === 'goals' ? c.kind === 'goal' : c.kind === 'brainstorm');
+  const convs = (state?.conversations ?? []).filter(c => c.kind === 'brainstorm');
+  const graphGoal=state?.goals.find(g=>g.id===graphGoalId)??null;
   const selected: Conversation | null =
-    convs.find(c => c.id === selectedId) ?? null;
+    state?.conversations.find(c => c.id === selectedId) ?? null;
   const messages = selected ? (state?.messages ?? []).filter(m => m.conversationId === selected.id) : [];
   const goal = selected?.goalId ? state?.goals.find(g => g.id === selected.goalId) ?? null : null;
+
+  const setupGoal = setupGoalId ? state?.goals.find(g => g.id === setupGoalId) ?? null : null;
 
   useEffect(() => {
     const el = listRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages.length, pending]);
 
-  const navigate = useCallback((id: string) => {
-    setSelectedId(id);
-    setTab(id && (state?.conversations.find(c => c.id === id)?.kind) === 'goal' ? 'goals' : 'brainstorm');
-    setDraft(''); setError(null);
-  }, [state?.conversations]);
+  const navigate = useCallback((id:string)=>{
+    currentChat.current=id;setSelectedId(id);setGraphGoalId(null);setDraft('');setError(null);setGoalMenu(false);
+  },[]);
+  const newChat=()=>{currentChat.current=null;setSelectedId(null);setGraphGoalId(null);setDraft('');setError(null);setGoalMenu(false);retryRequest.current=null;};
+  const ensureChat=async()=>{
+    if(currentChat.current)return currentChat.current;
+    if(creatingChat.current)return creatingChat.current;
+    const promise=bridge.newBrainstorm().then(id=>{currentChat.current=id;setSelectedId(id);return id;});
+    creatingChat.current=promise;
+    try{return await promise;}finally{creatingChat.current=null;}
+  };
+  const attachGoal=async(goalId:string|null)=>{
+    setBusy(true);setError(null);
+    try{const id=await ensureChat();await bridge.setChatGoal(id,goalId);setGoalMenu(false);}
+    catch{setError('Could not update goal context.');}finally{setBusy(false);}
+  };
+  const openGraph=(id:string)=>{setGraphGoalId(id);setGoalMenu(false);setError(null);};
 
-  const send = async () => {
-    const text = draft.trim();
-    if (!text || sending || !ready) return;
-    if (!selected) {
-      // empty brainstorm: create on first send
-      setSending(true); setError(null);
-      try {
-        const id = await bridge.newBrainstorm();
-        setSelectedId(id);
-        setPending(text); setDraft('');
-        await bridge.sendMessage(id, text, requestFor(text,id));
-        retryRequest.current=null;
-      } catch { setError('Message failed to send.'); setDraft(text); }
-      finally { setPending(null); setSending(false); }
-      return;
-    }
-    setSending(true); setError(null);
-    setPending(text); setDraft('');
+  const send=async()=>{
+    const text=draft.trim();if(!text||sending||busy||!ready)return;
+    setSending(true);setError(null);setPending(text);setDraft('');
+    try{const id=await ensureChat();await bridge.sendMessage(id,text,requestFor(text,id));retryRequest.current=null;}
+    catch{setError('Message failed to send.');setDraft(text);}
+    finally{setPending(null);setSending(false);}
+  };
+
+  const prepareGoal = async (g: Goal) => {
     try {
-      await bridge.sendMessage(selected.id, text, requestFor(text,selected.id));
-      retryRequest.current=null;
-    } catch {
-      setError('Message failed to send.');
-      setDraft(text);
-    } finally {
-      setPending(null); setSending(false);
-    }
+      const screens=await bridge.listDisplays();
+      if(!screens.length)throw new Error('No displays available. Check screen permission.');
+      setDisplays(screens);setChosenDisplay(screens[0].id);setPendingGoal(g);
+    } catch { setError('Screen unavailable. Check Screen Recording permission.'); }
   };
 
   const onGoalClick = async (g: Goal) => {
     if (session && session.goalId === g.id && (session.status === 'active' || session.status === 'paused')) {
-      navigate(g.conversationId);
+      openGraph(g.id);
       return;
     }
     if (!g.ready) {
-      try { await bridge.selectGoal(g.id); navigate(g.conversationId); }
+      try {
+        await bridge.selectGoal(g.id);
+        openGraph(g.id);
+        setSetupGoalId(g.id);
+      }
       catch { setError('Could not open goal.'); }
       return;
     }
-    setPendingGoal(g);
-    try { const screens=await bridge.listDisplays(); if(!screens.length)throw new Error('No displays available. Check screen permission.'); setDisplays(screens);setChosenDisplay(screens[0].id); }
-    catch { setError('Screen unavailable. Check Screen Recording permission.'); setPendingGoal(null); }
+    await prepareGoal(g);
   };
 
   const confirmGoal = async () => {
@@ -113,9 +125,10 @@ export default function App() {
     setBusy(true);
     try {
       const displayId = chosenDisplay || displays?.[0]?.id;
-      const cid = await bridge.selectGoal(pendingGoal.id, displayId);
+      await bridge.selectGoal(pendingGoal.id, displayId);
+      openGraph(pendingGoal.id);
       setPendingGoal(null); setDisplays(null);
-      navigate(cid); setTab('goals');
+
     } catch { setError('Could not start session.'); }
     finally { setBusy(false); }
   };
@@ -143,36 +156,23 @@ export default function App() {
 
   if (!state) return null;
 
-  const emptyState = !selected;
-  const showQuestion = tab === 'brainstorm' && !messages.length && !pending;
-  const goalChatEmpty = selected?.kind === 'goal' && messages.length === 0 && !pending;
+  const showQuestion = !messages.length && !pending;
   const perm = /permission|screen|camera|access/i.test(error ?? state.notice ?? '');
 
+  const composer=(bottom:boolean)=>(
+    <div className={'composer'+(bottom?' bottom':'')}>
+      {goal&&<div className="context-chip"><span>{goal.title}</span><button className="iconbtn" aria-label="Remove goal context" disabled={sending||busy} onClick={()=>attachGoal(null)}><Icon name="close" size={12}/></button></div>}
+      <div className="goal-attachment">
+        <button className="iconbtn" aria-label="Add to goal" aria-expanded={goalMenu} disabled={!ready||sending||busy||!!setupGoal||!state.goals.length} onClick={()=>setGoalMenu(!goalMenu)}><Icon name="plus"/></button>
+        {goalMenu&&<div className="goal-picker" role="menu" aria-label="Current goals">{state.goals.map(g=><button role="menuitem" key={g.id} onClick={()=>attachGoal(g.id)}>{g.title}</button>)}</div>}
+      </div>
+      <textarea aria-label="Message" rows={1} maxLength={16000} ref={taRef} value={draft} disabled={!ready||sending||busy||!!setupGoal} onChange={e=>setDraft(e.target.value)} onKeyDown={e=>{if(e.key==='Escape')setGoalMenu(false);if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();void send();}}}/>
+      <button className="sendbtn" aria-label="Send" disabled={!ready||sending||busy||!!setupGoal||!draft.trim()} onClick={send}><Icon name="send"/></button>
+    </div>
+  );
   return (
     <div className="app">
-      <aside className="sidebar">
-        <div className="tabs">
-          <button className={tab === 'goals' ? 'tab on' : 'tab'} onClick={() => { setTab('goals'); setSelectedId(null); }}>Goals</button>
-          <button className={tab === 'brainstorm' ? 'tab on' : 'tab'} onClick={() => { setTab('brainstorm'); setSelectedId(null); }}>Brainstorm</button>
-          <button className="iconbtn" aria-label="New chat" onClick={async () => {
-            try { const id = await bridge.newBrainstorm(); setTab('brainstorm'); setSelectedId(id); }
-            catch { setError('Could not create chat.'); }
-          }}><Icon name="plus" /></button>
-        </div>
-        <div className="rows">
-          {tab === 'goals' && (state.goals).map(g => (
-            <button key={g.id} className={'row' + (selected?.goalId === g.id ? ' sel' : '')} onClick={() => onGoalClick(g)}>
-              <span className={'dot' + (session?.goalId === g.id && session.status === 'active' ? ' live' : '') + (!g.ready ? ' hollow' : '')} />
-              <span className="rtitle">{g.title}</span>
-            </button>
-          ))}
-          {tab === 'brainstorm' && convs.map(c => (
-            <button key={c.id} className={'row' + (selected?.id === c.id ? ' sel' : '')} onClick={() => navigate(c.id)}>
-              <span className="rtitle">{c.title || 'New chat'}</span>
-            </button>
-          ))}
-        </div>
-      </aside>
+      <Sidebar goals={state.goals} brainstorms={convs} selectedConversationId={graphGoal?null:selectedId} selectedGoalId={graphGoalId} activeGoalId={session?.status==='active'?session.goalId:null} disabled={!ready||busy||sending||!!setupGoal} onGoal={onGoalClick} onConversation={navigate} onNewChat={newChat}/>
       <main className="content">
         <header className="topbar">
           <div className="tleft">
@@ -184,7 +184,7 @@ export default function App() {
               </span>
             )}
           </div>
-          <div className="trcenter">{selected ? (selected.title || 'New chat') : tab === 'goals' ? 'Goals' : 'Brainstorm'}</div>
+          <div className="trcenter">{graphGoal?.title??selected?.title??'Brainstorm'}</div>
           <div className="tright">
             {activeGoal && session && (
               <>
@@ -208,40 +208,36 @@ export default function App() {
           </div>
         )}
 
-        {showQuestion ? (
-          <div className="empty">
-            <h1>What goals are you trying to achieve?</h1>
-            <div className="composer">
-              <textarea aria-label="Message" rows={1} maxLength={16000} ref={taRef} value={draft} placeholder={ready ? '' : 'Connecting…'} disabled={!ready || sending}
-                onChange={e => setDraft(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} />
-              <button className="sendbtn" aria-label="Send" disabled={!ready || sending || !draft.trim()} onClick={send}><Icon name="send" /></button>
-            </div>
+        {graphGoal ? <>
+          <div className="graph-actions">
+            {!graphGoal.ready
+              ? <button className="btn" disabled={!!setupGoal} onClick={() => setSetupGoalId(graphGoal.id)}>Finish setup</button>
+              : activeGoal?.id !== graphGoal.id && <button className="btn" disabled={busy} onClick={() => { void onGoalClick(graphGoal); }}>Start focus</button>}
           </div>
-        ) : (
-          <>
-            <div className="msgs" ref={listRef}>
-              {goalChatEmpty && goal && (
-                <p className="sys">{!goal.ready
-                  ? !goal.outcome ? 'What would achieving this goal look like?' : !goal.onTrack.length ? 'What work on your screen would count as progress?' : 'What should count as a distraction from this goal?'
-                  : ''}</p>
-              )}
-              {messages.map(m => (
-                <div key={m.id} className={'msg ' + m.role}>
-                  {m.role === 'user' ? <div className="bubble">{m.content}</div> : <div className="prose">{m.content}</div>}
-                </div>
-              ))}
-              {pending && <div className="msg user"><div className="bubble">{pending}</div></div>}
-            </div>
-            {(selected || tab === "brainstorm") && <div className="composer bottom">
-              <textarea aria-label="Message" rows={1} maxLength={16000} ref={taRef} value={draft} disabled={!ready || sending}
-                onChange={e => setDraft(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} />
-              <button className="sendbtn" aria-label="Send" disabled={!ready || sending || !draft.trim()} onClick={send}><Icon name="send" /></button>
-            </div>}
-          </>
-        )}
+          <GoalGraph goal={graphGoal} details={state.goalDetails??[]}/>
+        </> : showQuestion ? (
+          <div className="empty">
+            <h1>{goal?`What would you like to add to ${goal.title}?`:'What goals are you trying to achieve?'}</h1>
+            {composer(false)}
+          </div>
+        ) : <>
+          <div className="msgs" ref={listRef}>
+            {messages.map(m=><div key={m.id} className={'msg '+m.role}>{m.role==='user'?<div className="bubble">{m.content}</div>:<div className="prose">{m.content}</div>}</div>)}
+            {pending&&<div className="msg user"><div className="bubble">{pending}</div></div>}
+            {sending&&<span className="reply-pending" aria-label="Thinking">···</span>}
+          </div>
+          {composer(true)}
+        </>}
       </main>
+
+      {setupGoal && (
+        <GoalSetup
+          goal={setupGoal}
+          onUpdated={setState}
+          onComplete={(updated) => { setSetupGoalId(null); openGraph(updated.id); void prepareGoal(updated); }}
+          onClose={() => setSetupGoalId(null)}
+        />
+      )}
 
       {displays && pendingGoal && (
         <div className="overlay" onKeyDown={e => { if (e.key === 'Escape' && !busy) { setDisplays(null); setPendingGoal(null); } }}>
